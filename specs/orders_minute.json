@@ -1,0 +1,79 @@
+{
+  "type": "kafka",
+  "spec": {
+    "dataSchema": {
+      "dataSource": "orders_minute",
+      "timestampSpec": {
+        "column": "event_time",
+        "format": "iso"
+      },
+      "dimensionsSpec": {
+        "dimensions": [
+          {
+            "name": "run_id",
+            "type": "string"
+          },
+          {
+            "name": "store_id",
+            "type": "string"
+          },
+          {
+            "name": "country",
+            "type": "string"
+          },
+          {
+            "name": "channel",
+            "type": "string"
+          },
+          {
+            "name": "event_type",
+            "type": "string"
+          },
+          {
+            "name": "currency",
+            "type": "string"
+          }
+        ]
+      },
+      "metricsSpec": [
+        {
+          "type": "count",
+          "name": "events"
+        },
+        {
+          "type": "longSum",
+          "name": "amount_cents_sum",
+          "fieldName": "amount_cents"
+        }
+      ],
+      "granularitySpec": {
+        "type": "uniform",
+        "segmentGranularity": "HOUR",
+        "queryGranularity": "MINUTE",
+        "rollup": true
+      }
+    },
+    "ioConfig": {
+      "type": "kafka",
+      "topic": "orders",
+      "consumerProperties": {
+        "bootstrap.servers": "kafka:29092"
+      },
+      "inputFormat": {
+        "type": "json"
+      },
+      "useEarliestOffset": true,
+      "replicas": 1,
+      "taskCount": 1,
+      "taskDuration": "PT10M"
+    },
+    "tuningConfig": {
+      "type": "kafka",
+      "maxRowsInMemory": 50000,
+      "maxRowsPerSegment": 500000,
+      "maxParseExceptions": 100,
+      "maxSavedParseExceptions": 10,
+      "logParseExceptions": true
+    }
+  }
+}

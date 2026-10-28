@@ -1,0 +1,7 @@
+SELECT run_id, event_id, COUNT(*) AS copies
+FROM orders_raw
+WHERE __time >= CURRENT_TIMESTAMP - INTERVAL '1' DAY
+GROUP BY 1, 2
+HAVING COUNT(*) > 1
+ORDER BY copies DESC
+LIMIT 100

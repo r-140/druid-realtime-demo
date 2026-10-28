@@ -1,55 +1,55 @@
-# Архитектура и инженерные решения
+# Architecture and engineering decisions
 
-## Data path и control plane
+## Data path and control plane
 
-Producer пишет события в Kafka `orders` (3 partitions). Kafka supervisor в Overlord распределяет partitions между indexing tasks. Tasks выполняются отдельными Java-процессами у MiddleManager, читают Kafka offsets, индексируют и отвечают на realtime queries. При публикации segments попадают в deep storage, metadata — в Postgres; Historical загружает segments. Broker маршрутизирует запросы к нужным Historical/realtime tasks и объединяет результаты. Router — UI/API вход.
+The producer writes events to the Kafka topic `orders` (3 partitions). The Kafka supervisor in Overlord assigns partitions to indexing tasks. Tasks run as separate Java processes under MiddleManager, read Kafka offsets, build indexes, and serve real-time queries. During publication, segments are written to deep storage and metadata to Postgres; Historical loads the segments. Broker routes queries to the relevant Historical services and real-time tasks and combines the results. Router is the UI/API entry point.
 
-В стенде Coordinator и Overlord совмещены в контейнере `coordinator`. ZooKeeper участвует в координации и discovery Druid. Сам Kafka использует KRaft, а не этот ZooKeeper. Postgres хранит Druid metadata, не события продаж. Local deep storage — общий volume `/opt/shared`; это не распределённое отказоустойчивое хранилище.
+In this environment, Coordinator and Overlord share the `coordinator` container. ZooKeeper supports Druid coordination and discovery. Kafka itself uses KRaft, not this ZooKeeper instance. Postgres stores Druid metadata, not sales events. Local deep storage is the shared `/opt/shared` volume; it is not distributed, fault-tolerant storage.
 
-При отказе Historical сегменты можно снова загрузить из deep storage. При отказе streaming worker восстановление зависит от offsets, published segments и доступности Kafka retention. Потеря metadata store или deep storage — отдельные сценарии disaster recovery, не эквивалент restart worker.
+If a Historical service fails, its segments can be reloaded from deep storage. If a streaming worker fails, recovery depends on offsets, published segments, and data still being available within Kafka retention. Losing the metadata store or deep storage is a separate disaster-recovery scenario, not equivalent to restarting a worker.
 
-## Контракт событий
+## Event contract
 
-| Поле | Семантика |
+| Field | Meaning |
 |---|---|
-| event_id | ID бизнес-события. Не ключ upsert в Druid |
-| order_id | Kafka key для partitioning; в генераторе одна продажа либо возврат на order |
-| run_id | Метка изолированного прогона, чтобы сверка не зависела от старых прогонов |
-| event_time | Время бизнес-события, становится Druid `__time` |
-| ingested_at | Время создания записи генератором, **не** Druid ingestion completion |
-| amount_cents | Signed integer: sale положителен, refund отрицателен |
-| currency | Отдельная размерность; суммы разных валют нельзя складывать без FX |
-| schema_version, campaign | Демонстрация additive schema evolution |
+| event_id | Business event ID; not an upsert key in Druid |
+| order_id | Kafka partitioning key; the generator produces one sale or refund per order |
+| run_id | An isolated run identifier, so reconciliation is independent of previous runs |
+| event_time | Business event time; becomes Druid `__time` |
+| ingested_at | Time the generator created the record, **not** Druid ingestion completion |
+| amount_cents | Signed integer: positive for a sale, negative for a refund |
+| currency | A separate dimension; totals across currencies require FX conversion |
+| schema_version, campaign | Demonstration of additive schema evolution |
 
-Генератор моделирует ledger фактов. Он не реализует полноценный lifecycle заказа, payment authorization, частичные возвраты и CDC. `net_amount_cents` — сумма событий ledger, а не бухгалтерски выверенная выручка.
+The generator models a ledger of facts. It does not implement a complete order lifecycle, payment authorization, partial refunds, or CDC. `net_amount_cents` is the sum of ledger events, not an accounting-reconciled revenue figure.
 
-## Гарантии
+## Guarantees
 
-Druid Kafka ingestion использует partition offsets для exactly-once ingestion в своём протоколе публикации/восстановления. Если producer пишет то же бизнес-событие в два разных Kafka offsets, Druid не устраняет такой дубль по event_id. Producer idempotence защищает от части дубликатов из-за retries в рамках producer protocol, но не превращает повторный запуск `send` в бизнес-idempotent операцию.
+Druid Kafka ingestion uses partition offsets to provide exactly-once ingestion within its publication and recovery protocol. If a producer writes the same business event at two different Kafka offsets, Druid does not deduplicate it by event_id. Producer idempotence protects against some retry-related duplicates within the producer protocol, but rerunning `send` is not a business-idempotent operation.
 
-Druid не предназначен для point updates/UPSERT каждой строки. Исправление аналитических данных здесь показано через batch rebuild в **новый datasource**. В production потребуется явный контракт canonical source, версий событий, дедупликации и cutover.
+Druid is not designed for per-row point updates or UPSERTs. This project demonstrates correcting analytical data through a batch rebuild into a **new datasource**. Production use requires an explicit contract for the canonical source, event versions, deduplication, and cutover.
 
-Rollup объединяет одинаковые dimensions и time bucket, суммируя metrics. Это агрегация, а не deduplication: повтор sale увеличит count и сумму. Raw сохраняет event_id и ingested_at; minute datasource исключает их ради более низкой cardinality. `run_id` оставлен только для лабораторной сверки; большое число run_id тоже ухудшает rollup.
+Rollup combines matching dimensions within a time bucket by aggregating metrics. It is aggregation, not deduplication: a repeated sale increases both the count and the sum. Raw retains event_id and ingested_at; the minute datasource excludes them to reduce cardinality. `run_id` is retained solely for lab reconciliation; a large number of run_id values also reduces rollup effectiveness.
 
-Streaming rollup — best effort; строки одного logical bucket могут находиться в нескольких segments. Поэтому запрос должен делать `SUM(events)`, а не считать физические строки. Финансовые суммы здесь exact integers; большие production итоги требуют контроля переполнения LONG. Approximate distinct/quantiles нужно изучать отдельно с измерением ошибки.
+Streaming rollup is best effort; rows belonging to the same logical bucket may appear in multiple segments. Queries must therefore use `SUM(events)` rather than count physical rows. Monetary totals here use exact integers; large production totals require LONG overflow checks. Study approximate distinct counts and quantiles separately, measuring their error.
 
-## Время, lateness и watermark
+## Time, lateness, and watermarks
 
-`event_time` определяет event-time buckets. `ingested_at` пригоден для оценки возраста видимых producer events, но задержка генерация→Kafka неотделима от Kafka→Druid без дополнительных timestamps. MAX(event_time) может давать ложную картину свежести при future timestamps.
+`event_time` determines event-time buckets. `ingested_at` can estimate the age of visible producer events, but separating generation→Kafka delay from Kafka→Druid delay requires additional timestamps. MAX(event_time) may give a misleading view of freshness when events have future timestamps.
 
-У основного supervisor нет lateMessageRejectionPeriod: старые события могут открыть старые time chunks и создать маленькие segments. Отдельный `orders_late_policy` задаёт PT1H. Порог привязан к **времени создания indexing task**, а не к максимальному event time, как watermark в Spark. Это не Spark watermark window и не универсальная граница завершённости окна. Very late data, retention, compaction и batch replacement надо согласовывать отдельно.
+The main supervisor has no lateMessageRejectionPeriod: old events may reopen old time chunks and create small segments. The separate `orders_late_policy` supervisor sets PT1H. The cutoff is tied to the **indexing task's creation time**, rather than the maximum event time as with a Spark watermark. It is not a Spark watermark window or a universal boundary for window completeness. Very late data, retention, compaction, and batch replacement need separate coordination.
 
-## Что отличается от production
+## Differences from production
 
-Один broker Kafka, один экземпляр каждой роли, replicas=1, локальные volumes и plaintext. Нет HA/S3, TLS/auth/RBAC, schema registry/DLQ, CDC connector, autoscaling, Kubernetes manifests, GitOps, backup restore, native metrics pipeline. Ports привязаны к localhost; пароли учебные. Не публикуй стенд в интернет.
+There is one Kafka broker, one instance of each role, replicas=1, local volumes, and plaintext communication. The environment does not include HA/S3, TLS/auth/RBAC, a schema registry or DLQ, a CDC connector, autoscaling, Kubernetes manifests, GitOps, backup restoration, or a native metrics pipeline. Ports bind to localhost and passwords are for local learning only. Do not expose this environment to the internet.
 
-Практические следующие этапы после локальных labs:
+Practical next steps after the local labs:
 
-1. Native metrics emitter + Grafana + уведомления с проверенным noise budget; отдельно task metrics и service metrics.
-2. Object storage, резервное копирование metadata и проверяемый restore.
-3. Kind/k3d, resource requests/limits, probes, persistent volumes, graceful termination и disruption exercise.
-4. Второй worker и replicas=2; Kafka 3 brokers; failure-domain analysis.
-5. Canonical upstream pipeline с durable dedup и DLQ. Не писать «exactly-once end-to-end» без проверки всех границ.
-6. Миграционная лаборатория: shadow queries, compare results, schema compatibility, rollback, cutover.
+1. A native metrics emitter, Grafana, and alerts with a validated noise budget; collect task metrics separately from service metrics.
+2. Object storage, metadata backups, and a tested restore procedure.
+3. Kind/k3d, resource requests and limits, probes, persistent volumes, graceful termination, and a disruption exercise.
+4. A second worker and replicas=2; three Kafka brokers; failure-domain analysis.
+5. A canonical upstream pipeline with durable deduplication and a DLQ. Do not claim “exactly-once end-to-end” without checking every boundary.
+6. A migration lab covering shadow queries, result comparison, schema compatibility, rollback, and cutover.
 
-Эти пункты — roadmap, не реализованные возможности v1.
+These items are a roadmap, not implemented v1 features.

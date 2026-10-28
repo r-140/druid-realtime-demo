@@ -1,54 +1,54 @@
-# Runbooks: локальная real-time платформа
+# Runbooks: local real-time platform
 
-Общий порядок: зафиксировать scope и timestamps → проверить serving отдельно от ingestion → найти ограничивающий компонент → применить минимальное исправление → проверить count/sum и handoff. Не reset offsets первым действием.
+General sequence: record scope and timestamps → check serving separately from ingestion → find the limiting component → apply a minimal fix → verify counts, sums, and handoff. Do not start by resetting offsets.
 
-## SQL не отвечает / console показывает ошибки
+## SQL is unavailable / the console shows errors
 
-1. `docker compose ps`; `docker compose logs --tail 100 router broker coordinator`.
-2. Проверь host memory, disk, OOM/restart count: `docker stats --no-stream`, `docker inspect` конкретного контейнера.
-3. Router доступен, но SQL нет: проверить Broker и discovery. SQL SELECT 1 успешен, но datasource нет: проверить supervisor/tasks/segments, это ещё не доказательство исправного ingestion.
-4. Если query timeout только на тяжёлых запросах: ограничить time range, проверить cardinality, query plan в console и processing memory. Не начинать с произвольного увеличения timeout.
-5. После исправления `python -m lab.cli wait`, затем verify для нужного manifest.
+1. Run `docker compose ps` and `docker compose logs --tail 100 router broker coordinator`.
+2. Check host memory, disk, OOM events, and restart counts using `docker stats --no-stream` and `docker inspect` for the relevant container.
+3. If Router is reachable but SQL is not, check Broker and discovery. If SQL SELECT 1 succeeds but the datasource is missing, check the supervisor, tasks, and segments; SELECT 1 alone does not prove ingestion is healthy.
+4. If only expensive queries time out, narrow the time range and check cardinality, the query plan in the console, and processing memory. Do not begin by arbitrarily increasing the timeout.
+5. After the fix, run `python -m lab.cli wait`, then verify the relevant manifest.
 
-## Supervisor unhealthy / lag растёт
+## Supervisor is unhealthy / lag is growing
 
-1. `python -m lab.cli status`; сохранить healthy, state, recentErrors, partitions, latest/current offsets и lag. Набор полей зависит от версии и состояния задачи.
-2. `python -m lab.cli query queries/tasks.sql`; посмотреть task reports/logs через console.
-3. Проверить Kafka reachability: host producer использует `localhost:9092`, Druid внутри Docker — `kafka:29092`. Нельзя подставлять localhost в supervisor.
-4. Проверить topic existence (`python -m lab.cli bootstrap` создаёт только при отсутствии). Partitions=3, taskCount=1: одна reading task читает три partitions. Увеличение taskCount выше числа partitions не даёт дополнительной reading concurrency.
-5. Проверить slots: replicas × taskCount reading tasks плюс задачи публикации, batch и compaction. Не повышать concurrency без RAM и slots.
-6. После восстановления убедиться, что lag убывает, затем count/distinct/sum и handoff. Lag=0 без reconciliation не доказывает корректность payload.
+1. Run `python -m lab.cli status`; save healthy, state, recentErrors, partitions, latest/current offsets, and lag. Available fields depend on the version and task state.
+2. Run `python -m lab.cli query queries/tasks.sql`; inspect task reports/logs through the console.
+3. Check Kafka reachability: the host producer uses `localhost:9092`; Druid inside Docker uses `kafka:29092`. Do not use localhost in the supervisor configuration.
+4. Check that the topic exists (`python -m lab.cli bootstrap` creates it only if absent). With partitions=3 and taskCount=1, one reading task reads three partitions. Raising taskCount above the number of partitions adds no reading concurrency.
+5. Check slots: replicas × taskCount reading tasks, plus publishing, batch, and compaction tasks. Do not increase concurrency without sufficient RAM and task slots.
+6. After recovery, confirm lag is decreasing, then verify counts, distinct counts, sums, and handoff. Zero lag without reconciliation does not prove payload correctness.
 
 ## Parse exceptions / missing rows
 
-1. Сопоставить producer acknowledged records, manifest valid_records и bad_records. Не ожидать число Kafka records в COUNT(*) Druid после отбрасывания невалидных строк.
-2. Посмотреть reports: unparseable, processedWithError, thrownAway. Уточнить timestamp parsing, тип numeric field и late rejection.
-3. Отобрать payload из сохранённого архива; не сохранять production PII в диагностических логах.
-4. Исправить producer/schema. Для уже потерянных при ingestion данных подготовить canonical rebuild и сверку, учитывая Kafka retention и offsets.
-5. Не считать maxSavedParseExceptions полноценным DLQ. Этот проект не содержит автоматического DLQ маршрута.
+1. Compare producer-acknowledged records with manifest valid_records and bad_records. After invalid records are dropped, Druid COUNT(*) should not equal the total number of Kafka records.
+2. Inspect reports: unparseable, processedWithError, and thrownAway. Check timestamp parsing, numeric field types, and late rejection.
+3. Inspect payload samples from the saved archive; do not write production PII to diagnostic logs.
+4. Fix the producer/schema. For data already lost during ingestion, prepare a canonical rebuild and reconciliation, accounting for Kafka retention and offsets.
+5. Do not treat maxSavedParseExceptions as a full DLQ. This project does not include automatic DLQ routing.
 
-## Двойные суммы после recovery
+## Totals doubled after recovery
 
-1. Проверить COUNT(*) против COUNT(DISTINCT event_id) с exact distinct context.
-2. Найти повторные ID (`queries/duplicates.sql`, корректный time range).
-3. Проверить историю `send`, использование нового producer session и reset offsets. Два Kafka offsets с одинаковым event_id — два события для Druid.
-4. Не устранять проблему compaction: rollup суммирует повторы, не вычитает их.
-5. В лаборатории восстановить отдельный orders_rebuilt_<version> datasource из canonical archive, проверить unique count/sum. В production определить event version/conflict policy до cutover.
+1. Compare COUNT(*) with COUNT(DISTINCT event_id), using an exact-distinct query context.
+2. Find repeated IDs with `queries/duplicates.sql`, using the appropriate time range.
+3. Check the history of `send` calls, new producer sessions, and offset resets. Two Kafka offsets with the same event_id represent two events to Druid.
+4. Compaction does not fix this: rollup adds duplicates rather than subtracting them.
+5. In the lab, rebuild a separate orders_rebuilt_<version> datasource from the canonical archive and verify unique counts and sums. In production, define event-version and conflict-resolution policies before cutover.
 
-## Tasks зависли в publishing / segments недоступны
+## Tasks are stuck publishing / segments are unavailable
 
-1. Посмотреть task status/report и Coordinator/Historical logs. Task completion и query availability — разные состояния.
-2. Проверить `/opt/shared` volume, free disk, permissions и metadata Postgres availability. Один локальный общий volume — намеренное ограничение стенда.
-3. Проверить availability в segments UI и `queries/segments.sql`. Не путать active/published и реально loaded/available.
-4. После handoff проверить запросы до/после. Restart без проверки metadata/deep storage не является disaster recovery.
+1. Inspect task status/reports and Coordinator/Historical logs. Task completion and query availability are different states.
+2. Check the `/opt/shared` volume, free disk space, permissions, and metadata Postgres availability. A single local shared volume is an intentional limitation of this environment.
+3. Check availability in the segments UI and with `queries/segments.sql`. Distinguish active/published segments from segments that are actually loaded/available.
+4. Compare queries before and after handoff. Restarting without checking metadata and deep storage is not disaster recovery.
 
-## OOM / большое число маленьких segments
+## OOM / many small segments
 
-1. Проверить host/container memory, число peon JVM, heap/direct buffers; heap — только часть памяти Druid.
-2. Suspend необязательные supervisors, дождаться завершения tasks. Сначала raw-only конфигурация; не запускай rebuild одновременно с двумя reading/publishing supervisors на маленькой машине.
-3. Маленькие segments здесь возможны из-за короткого taskDuration=10m и late events. В production подбирать granularity, task duration, target segment size и compaction по измерениям.
-4. Compaction на опубликованном закрытом интервале, затем count/sum и проверка новых segments. На крошечных данных экономия не гарантирована.
+1. Check host/container memory, the number of peon JVMs, heap, and direct buffers; heap is only part of Druid's memory footprint.
+2. Suspend optional supervisors and wait for tasks to finish. Start with the raw-only configuration; do not run rebuilds alongside two supervisors' reading/publishing tasks on a small machine.
+3. Small segments can result from the short taskDuration=10m and late events. In production, choose granularity, task duration, target segment size, and compaction settings based on measurements.
+4. Compact a published, closed interval, then verify counts, sums, and new segments. Savings are not guaranteed on tiny datasets.
 
-## Полный сброс
+## Full reset
 
-`docker compose down` сохраняет данные. Удаление volumes — потеря metadata, segments и Kafka history. Если нужен полный disposable reset: остановить producer/probe, осознанно выполнить `docker compose down -v`, выбрать новый archive output path, затем First Run. Удаление volumes не удаляет host `data/`.
+`docker compose down` preserves data. Removing volumes loses metadata, segments, and Kafka history. For a deliberate full reset of this disposable environment: stop the producer/probe, run `docker compose down -v`, choose a new archive output path, and repeat “First run.” Removing volumes does not delete the host's `data/` directory.

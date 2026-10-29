@@ -1,0 +1,110 @@
+{
+  "type": "kafka",
+  "spec": {
+    "dataSchema": {
+      "dataSource": "orders_clean",
+      "timestampSpec": {
+        "column": "event_time",
+        "format": "iso"
+      },
+      "dimensionsSpec": {
+        "dimensions": [
+          {
+            "name": "event_id",
+            "type": "string"
+          },
+          {
+            "name": "order_id",
+            "type": "string"
+          },
+          {
+            "name": "run_id",
+            "type": "string"
+          },
+          {
+            "name": "store_id",
+            "type": "string"
+          },
+          {
+            "name": "country",
+            "type": "string"
+          },
+          {
+            "name": "channel",
+            "type": "string"
+          },
+          {
+            "name": "event_type",
+            "type": "string"
+          },
+          {
+            "name": "currency",
+            "type": "string"
+          },
+          {
+            "name": "ingested_at",
+            "type": "string"
+          },
+          {
+            "name": "amount_cents",
+            "type": "long"
+          },
+          {
+            "name": "schema_version",
+            "type": "long"
+          },
+          {
+            "name": "campaign",
+            "type": "string"
+          },
+          {
+            "name": "store_city",
+            "type": "string"
+          },
+          {
+            "name": "store_region",
+            "type": "string"
+          },
+          {
+            "name": "enrichment_version",
+            "type": "string"
+          },
+          {
+            "name": "source_delay_ms",
+            "type": "long"
+          }
+        ]
+      },
+      "metricsSpec": [],
+      "granularitySpec": {
+        "type": "uniform",
+        "segmentGranularity": "HOUR",
+        "queryGranularity": "NONE",
+        "rollup": false
+      }
+    },
+    "ioConfig": {
+      "type": "kafka",
+      "topic": "orders_clean",
+      "consumerProperties": {
+        "bootstrap.servers": "kafka:29092",
+        "isolation.level": "read_committed"
+      },
+      "inputFormat": {
+        "type": "json"
+      },
+      "useEarliestOffset": true,
+      "replicas": 1,
+      "taskCount": 1,
+      "taskDuration": "PT10M"
+    },
+    "tuningConfig": {
+      "type": "kafka",
+      "maxRowsInMemory": 50000,
+      "maxRowsPerSegment": 500000,
+      "maxParseExceptions": 0,
+      "maxSavedParseExceptions": 10,
+      "logParseExceptions": true
+    }
+  }
+}

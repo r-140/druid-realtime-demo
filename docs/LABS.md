@@ -155,3 +155,7 @@ Enable the probe and Prometheus as described in the README. Repeat the worker fa
 - Producer timestamp age: useful only when traffic arrives regularly.
 
 Write a report covering versions, resources, volume, scenario, expected versus actual results, recovery time, screenshots/outputs, and conclusions. Questions to answer: why can SQL work while ingestion is broken; how does Kafka retention differ from Druid retention; why is resetting offsets risky; how can you demonstrate the absence of data loss; how would you roll back a schema change; which components require HA?
+
+## 9. Optional Flink processing and recovery
+
+Continue with [Flink setup and labs](FLINK.md). Compare the direct raw path with validated, deduplicated, enriched clean output; inspect DLQ and duplicate audit records, replay an archive, inject a payload conflict, and test TaskManager recovery and savepoint restoration.

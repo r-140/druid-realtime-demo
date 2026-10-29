@@ -41,15 +41,17 @@ The main supervisor has no lateMessageRejectionPeriod: old events may reopen old
 
 ## Differences from production
 
-There is one Kafka broker, one instance of each role, replicas=1, local volumes, and plaintext communication. The environment does not include HA/S3, TLS/auth/RBAC, a schema registry or DLQ, a CDC connector, autoscaling, Kubernetes manifests, GitOps, backup restoration, or a native metrics pipeline. Ports bind to localhost and passwords are for local learning only. Do not expose this environment to the internet.
+There is one Kafka broker, one instance of each role, replicas=1, local volumes, and plaintext communication. The environment does not include HA/S3, TLS/auth/RBAC, a schema registry or production DLQ replay service, a CDC connector, autoscaling, Kubernetes manifests, GitOps, backup restoration, or a native metrics pipeline. Ports bind to localhost and passwords are for local learning only. Do not expose this environment to the internet.
 
 Practical next steps after the local labs:
+
+The optional [Flink path](FLINK.md) now implements validation, keyed deduplication with a 24-hour processing-time TTL, static store enrichment, and transactional Kafka outputs. It preserves append-only facts for Druid and adds DLQ and duplicate audit streams. It does not implement dynamic reference-data joins or event-time window aggregation.
 
 1. A native metrics emitter, Grafana, and alerts with a validated noise budget; collect task metrics separately from service metrics.
 2. Object storage, metadata backups, and a tested restore procedure.
 3. Kind/k3d, resource requests and limits, probes, persistent volumes, graceful termination, and a disruption exercise.
 4. A second worker and replicas=2; three Kafka brokers; failure-domain analysis.
-5. A canonical upstream pipeline with durable deduplication and a DLQ. Do not claim “exactly-once end-to-end” without checking every boundary.
+5. Extend the optional Flink pipeline with production DLQ replay, dynamic enrichment, and an explicitly chosen long-term deduplication strategy. Do not claim “exactly-once end-to-end” without checking every boundary.
 6. A migration lab covering shadow queries, result comparison, schema compatibility, rollback, and cutover.
 
 These items are a roadmap, not implemented v1 features.

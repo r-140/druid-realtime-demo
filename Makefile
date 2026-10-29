@@ -20,3 +20,14 @@ smoke:
 
 monitoring:
 	docker compose --profile monitoring up -d prometheus
+
+.PHONY: flink-up flink-submit flink-list
+flink-up:
+	docker compose --profile flink build flink-jobmanager
+	docker compose --profile flink up -d flink-jobmanager flink-taskmanager
+
+flink-submit:
+	docker compose --profile flink --profile flink-tools run --rm flink-client flink run -d -m flink-jobmanager:8081 -py /opt/flink/usrlib/stream_job.py -pyfs /opt/flink/usrlib/stream_contract.py
+
+flink-list:
+	docker compose --profile flink --profile flink-tools run --rm flink-client flink list -m flink-jobmanager:8081

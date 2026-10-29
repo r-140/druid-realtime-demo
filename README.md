@@ -1,6 +1,6 @@
 # Druid Real-time Platform Lab
 
-A hands-on lab for learning Apache Druid and operating a real-time OLAP platform. The domain is sales and refund events from a retail chain. Python + Apache Kafka + Apache Druid + PostgreSQL + ZooKeeper, with optional Prometheus.
+A hands-on lab for learning Apache Druid and operating a real-time OLAP platform. The domain is sales and refund events from a retail chain. Python + Apache Kafka + Apache Druid + PostgreSQL + ZooKeeper, with optional Prometheus and a PyFlink processing path.
 
 The goal is to explain an event's journey to a SQL query, test delivery guarantees, and recover ingestion after a failure. The project includes a local environment and reproducible exercises. It is not a production deployment.
 
@@ -13,6 +13,7 @@ The goal is to explain an event's journey to a SQL query, test delivery guarante
 - A raw datasource, optional minute-level rollup, and a separate late-event rejection policy.
 - Manifests with expected record counts, distinct event counts, and monetary totals.
 - SQL examples, a latency benchmark, an application-level metrics probe, and a Prometheus scrape configuration.
+- Optional [Flink profile](docs/FLINK.md): validation, 24-hour keyed deduplication, static store enrichment, DLQ/duplicate audit topics, transactional Kafka sinks, and checkpoint/savepoint exercises.
 - Step-by-step [labs](docs/LABS.md), [runbooks](docs/RUNBOOKS.md), and [architecture and limitations](docs/ARCHITECTURE.md).
 
 ## Prerequisites
@@ -65,6 +66,24 @@ Expected reconciliation: **1100 valid records, 1000 unique event IDs**, and the 
 
 Start with steps 1–3. Continue once you can trace an event from the producer to a query.
 
+## Optional Flink path
+
+The direct path remains available. The optional path is:
+
+**Kafka `orders` → Flink → Kafka `orders_clean` → Druid `orders_clean`**
+
+See [Flink setup and labs](docs/FLINK.md) for startup, expected raw-versus-clean results, replay, conflict handling, and recovery. Flink runs inside Docker; the host Python requirements stay unchanged.
+
+```bash
+python -m lab.cli bootstrap --flink
+make flink-up
+# Wait for a registered TaskManager in http://localhost:8084 before submitting.
+make flink-submit
+python -m lab.cli ingest specs/orders_clean.json
+```
+
+Run these after the base environment is up. Start only one Flink job; submitting again without restoring state is not a recovery operation. Keep only raw and clean Druid supervisors active during the Flink lab to stay within the task-slot budget.
+
 ## Monitoring
 
 In a separate terminal with `.venv` activated:
@@ -98,4 +117,4 @@ docker compose down
 
 ## Validation status
 
-Docker is unavailable in the preparation environment. Unit tests and an offline generator smoke test were run, and YAML/JSON was checked. Container startup, Kafka → Druid ingestion, failover, and performance **have not been tested here**. The first local acceptance check is the command sequence under “First run.” The runbooks cover potential issues and diagnosis. The project does not yet report measured latency or throughput results.
+Docker is unavailable in the preparation environment. Unit tests, offline generation, and an offline simulation of the shared Flink contract/disposition logic were run; YAML/JSON was checked. Container startup, Kafka → Flink → Druid ingestion, Kafka transactions, checkpoint/savepoint recovery, failover, and performance **have not been tested here**. The first local acceptance check is the command sequence under “First run.” The runbooks cover potential issues and diagnosis. The project does not yet report measured latency or throughput results.

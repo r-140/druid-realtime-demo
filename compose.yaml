@@ -145,6 +145,143 @@ services:
     - 127.0.0.1:9090:9090
     extra_hosts:
     - host.docker.internal:host-gateway
+  flink-jobmanager:
+    image: druid-lab-flink:1.20.1
+    build:
+      context: .
+      dockerfile: flink/Dockerfile
+    profiles:
+    - flink
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: 'jobmanager.rpc.address: flink-jobmanager
+
+        rest.bind-address: 0.0.0.0
+
+        jobmanager.memory.process.size: 1024m
+
+        taskmanager.memory.process.size: 2048m
+
+        taskmanager.numberOfTaskSlots: 2
+
+        parallelism.default: 1
+
+        state.backend.type: hashmap
+
+        state.checkpoints.dir: file:///opt/flink/state/checkpoints
+
+        state.savepoints.dir: file:///opt/flink/state/savepoints
+
+        restart-strategy.type: fixed-delay
+
+        restart-strategy.fixed-delay.attempts: 10
+
+        restart-strategy.fixed-delay.delay: 10s
+
+        python.executable: /opt/pyflink/bin/python
+
+        python.client.executable: /opt/pyflink/bin/python
+
+        '
+      DEDUP_TTL_SECONDS: '86400'
+      TX_PREFIX: druid-lab-v2
+    volumes:
+    - flink-state:/opt/flink/state
+    ports:
+    - 127.0.0.1:8084:8081
+    depends_on:
+      kafka:
+        condition: service_healthy
+  flink-taskmanager:
+    image: druid-lab-flink:1.20.1
+    build:
+      context: .
+      dockerfile: flink/Dockerfile
+    profiles:
+    - flink
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: 'jobmanager.rpc.address: flink-jobmanager
+
+        rest.bind-address: 0.0.0.0
+
+        jobmanager.memory.process.size: 1024m
+
+        taskmanager.memory.process.size: 2048m
+
+        taskmanager.numberOfTaskSlots: 2
+
+        parallelism.default: 1
+
+        state.backend.type: hashmap
+
+        state.checkpoints.dir: file:///opt/flink/state/checkpoints
+
+        state.savepoints.dir: file:///opt/flink/state/savepoints
+
+        restart-strategy.type: fixed-delay
+
+        restart-strategy.fixed-delay.attempts: 10
+
+        restart-strategy.fixed-delay.delay: 10s
+
+        python.executable: /opt/pyflink/bin/python
+
+        python.client.executable: /opt/pyflink/bin/python
+
+        '
+      DEDUP_TTL_SECONDS: '86400'
+      TX_PREFIX: druid-lab-v2
+    volumes:
+    - flink-state:/opt/flink/state
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+  flink-client:
+    image: druid-lab-flink:1.20.1
+    build:
+      context: .
+      dockerfile: flink/Dockerfile
+    profiles:
+    - flink-tools
+    command: help
+    environment:
+      FLINK_PROPERTIES: 'jobmanager.rpc.address: flink-jobmanager
+
+        rest.bind-address: 0.0.0.0
+
+        jobmanager.memory.process.size: 1024m
+
+        taskmanager.memory.process.size: 2048m
+
+        taskmanager.numberOfTaskSlots: 2
+
+        parallelism.default: 1
+
+        state.backend.type: hashmap
+
+        state.checkpoints.dir: file:///opt/flink/state/checkpoints
+
+        state.savepoints.dir: file:///opt/flink/state/savepoints
+
+        restart-strategy.type: fixed-delay
+
+        restart-strategy.fixed-delay.attempts: 10
+
+        restart-strategy.fixed-delay.delay: 10s
+
+        python.executable: /opt/pyflink/bin/python
+
+        python.client.executable: /opt/pyflink/bin/python
+
+        '
+      DEDUP_TTL_SECONDS: '86400'
+      TX_PREFIX: druid-lab-v2
+    volumes:
+    - flink-state:/opt/flink/state
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
 volumes:
   metadata: {}
   zkdata: {}
@@ -156,3 +293,4 @@ volumes:
   historical: {}
   middlemanager: {}
   router: {}
+  flink-state: {}

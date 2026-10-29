@@ -106,8 +106,9 @@ def bootstrap(args):
     from confluent_kafka.admin import AdminClient, NewTopic
     from confluent_kafka import KafkaException, KafkaError
     admin = AdminClient({'bootstrap.servers': args.bootstrap})
-    result = admin.create_topics([NewTopic('orders', num_partitions=3, replication_factor=1,
-                                          config={'retention.ms': '604800000'})])
+    topics = ['orders'] + (['orders_clean', 'orders_dlq', 'orders_duplicates'] if args.flink else [])
+    result = admin.create_topics([NewTopic(topic, num_partitions=3, replication_factor=1,
+                                          config={'retention.ms': '604800000'}) for topic in topics])
     for topic, future in result.items():
         try:
             future.result(timeout=60)
@@ -158,9 +159,10 @@ def ingest(args):
     print(json.dumps(request(OVERLORD, '/druid/indexer/v1/supervisor', json.loads(Path(args.spec).read_text())), indent=2))
 
 
-def check_result(manifest, rows, rollup=False):
+def check_result(manifest, rows, rollup=False, unique=False):
     row = rows[0]
-    expected = {'n': manifest['valid_records'], 'amount': manifest['amount_cents']}
+    expected = {'n': manifest['unique_events'] if unique else manifest['valid_records'],
+                'amount': manifest['unique_amount_cents'] if unique else manifest['amount_cents']}
     if not rollup:
         expected['unique_n'] = manifest['unique_events']
     actual = {key: int(row.get(key) or 0) for key in expected}
@@ -177,15 +179,22 @@ def verify(args):
     # Explicit exact distinct for deterministic validation; approximate sketches are a separate exercise.
     deadline = time.monotonic() + args.timeout
     last = {}
+    matching_since = None
     while True:
         try:
             rows = request(ROUTER, '/druid/v2/sql', {'query': query, 'context': {'useApproximateCountDistinct': False, 'timeout': 20000}})
-            good, last = check_result(m, rows, rollup)
+            good, last = check_result(m, rows, rollup, args.unique)
             if good:
-                print(json.dumps(last, indent=2))
-                return
+                if matching_since is None:
+                    matching_since = time.monotonic()
+                if time.monotonic() - matching_since >= args.settle_seconds:
+                    print(json.dumps(last, indent=2))
+                    return
+            else:
+                matching_since = None
         except (RuntimeError, URLError, TimeoutError) as exc:
             last = {'error': str(exc)}
+            matching_since = None
         if time.monotonic() >= deadline:
             raise RuntimeError(f'Reconciliation did not pass: {json.dumps(last)}')
         time.sleep(3)
@@ -281,6 +290,8 @@ def main():
     for name, func in [('bootstrap', bootstrap), ('send', send)]:
         c = sub.add_parser(name)
         c.add_argument('--bootstrap', default='localhost:9092')
+        if name == 'bootstrap':
+            c.add_argument('--flink', action='store_true', help='Also create clean, DLQ and duplicate topics')
         if name == 'send':
             c.add_argument('file')
             c.add_argument('--rate', type=float, default=0, help='Records/sec; zero sends without throttling')
@@ -290,11 +301,11 @@ def main():
     c = sub.add_parser('status'); c.add_argument('--supervisor', default='orders_raw', type=identifier)
     c.set_defaults(func=lambda a: print(json.dumps(request(OVERLORD, f'/druid/indexer/v1/supervisor/{a.supervisor}/status'), indent=2)))
     c = sub.add_parser('wait'); c.add_argument('--timeout', type=int, default=300); c.set_defaults(func=wait)
-    c = sub.add_parser('verify'); c.add_argument('manifest'); c.add_argument('--datasource', default='orders_raw'); c.add_argument('--rollup', action='store_true'); c.add_argument('--timeout', type=int, default=180); c.set_defaults(func=verify)
+    c = sub.add_parser('verify'); c.add_argument('manifest'); c.add_argument('--datasource', default='orders_raw'); c.add_argument('--rollup', action='store_true'); c.add_argument('--unique', action='store_true', help='Compare against deduplicated count and sum'); c.add_argument('--settle-seconds', type=float, default=0, help='Require matching results across this observation period'); c.add_argument('--timeout', type=int, default=180); c.set_defaults(func=verify)
     c = sub.add_parser('backfill'); c.add_argument('file'); c.add_argument('--datasource', required=True); c.set_defaults(func=backfill)
     c = sub.add_parser('compact'); c.add_argument('--datasource', default='orders_raw'); c.add_argument('--interval', required=True); c.set_defaults(func=compact)
     args = parser.parse_args()
-    for field in ['count', 'late_every', 'duplicate_every', 'bad_records', 'rate']:
+    for field in ['count', 'late_every', 'duplicate_every', 'bad_records', 'rate', 'settle_seconds']:
         if hasattr(args, field) and getattr(args, field) < 0:
             parser.error(f'{field} must be nonnegative')
     if args.command == 'generate' and args.count == 0:

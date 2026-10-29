@@ -52,3 +52,7 @@ General sequence: record scope and timestamps → check serving separately from 
 ## Full reset
 
 `docker compose down` preserves data. Removing volumes loses metadata, segments, and Kafka history. For a deliberate full reset of this disposable environment: stop the producer/probe, run `docker compose down -v`, choose a new archive output path, and repeat “First run.” Removing volumes does not delete the host's `data/` directory.
+
+## Flink path issues
+
+See the [Flink troubleshooting section](FLINK.md#troubleshooting-and-operational-signals). Check job state, completed checkpoints, committed Kafka output, and Druid ingestion separately. A fresh Flink submission without state restoration can replay old events into existing output topics. The base Druid Prometheus probe does not cover Flink checkpoint health or custom counters.

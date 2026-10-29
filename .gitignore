@@ -1,0 +1,54 @@
+# Python environments and bytecode
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+# Test, coverage, and tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Python packaging output
+build/
+dist/
+*.egg-info/
+
+# Generated event archives, manifests, and rebuild files
+/data/*
+!/data/.gitkeep
+
+# Local Flink state and runtime output
+/checkpoints/
+/savepoints/
+/state/
+/logs/
+*.log
+*.log.*
+*.pid
+
+# Local environment overrides; keep shared druid.env tracked
+.env
+.env.*
+!.env.example
+!.env.template
+/compose.override.yaml
+/compose.override.yml
+/docker-compose.override.yaml
+/docker-compose.override.yml
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
